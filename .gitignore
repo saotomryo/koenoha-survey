@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+node_modules/
+data/
+.vercel/
+test-results/
+public/vendor/
+.DS_Store
+*.log
+__pycache__/
+.venv/
+*.pem
+*.key
+credentials*.json
+service-account*.json
+secrets/
