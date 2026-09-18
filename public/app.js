@@ -87,12 +87,18 @@ function editor() {
     <section class="editor-section"><div class="section-heading"><h2>設問</h2>${button('add-questions', '設問を追加', 'plus')}</div>${s.questions.map((f, i) => editorField(f, i, 'questions')).join('')}</section>
     <section class="editor-section"><h2>AI共通設定</h2><div class="editor-row"><label>プロバイダー<select name="provider"><option value="openai" ${s.interview.provider === 'openai' ? 'selected' : ''}>OpenAI</option><option value="anthropic" ${s.interview.provider === 'anthropic' ? 'selected' : ''}>Claude</option></select></label><label class="grow">モデル<input name="model" value="${escape(s.interview.model)}" placeholder="${escape(models.find(p => p.id === s.interview.provider)?.model || 'サーバーの既定値')}" maxlength="100"></label></div><div class="editor-row"><label class="check"><input name="aiEnabled" type="checkbox" ${s.interview.enabled ? 'checked' : ''}>最後にアンケート全体のAIインタビューも追加する</label><label>末尾インタビューの質問回数<input name="maxTurns" type="number" min="1" max="10" value="${s.interview.maxTurns}"></label></div></section><div class="save-bar"><button type="submit" class="primary">${icon('save')}保存する</button></div></form>`);
   document.querySelector('.editor-basics').insertAdjacentHTML('beforeend', `<label>回答保存先のスプレッドシートID（任意）<input name="spreadsheetId" value="${escape(s.spreadsheetId || '')}" maxlength="200" placeholder="未指定の場合は共通スプレッドシート"></label><p class="muted">${state.settings?.storage === 'sheets' ? '回答はアンケート専用タブに保存します。' : 'ローカル保存中です。この設定はGoogleスプレッドシート利用時に適用されます。'}</p>`);
+  document.querySelector('.editor-basics').insertAdjacentHTML('beforeend', `<h2>回答数の上限</h2><div class="editor-row"><label>想定回答数<input name="expectedResponses" type="number" min="1" max="100000" step="1" required value="${s.expectedResponses ?? 100}"></label><label>上限倍率<input name="responseLimitMultiplier" type="number" min="1" max="1.9" step="0.1" required value="${s.responseLimitMultiplier ?? 1.2}"></label><label>受付上限<output id="response-limit"></output></label></div>`);
+  const updateLimit = () => { document.querySelector('#response-limit').textContent = `${Math.ceil(Number(document.querySelector('[name="expectedResponses"]').value) * Number(document.querySelector('[name="responseLimitMultiplier"]').value))}件`; };
+  for (const name of ['expectedResponses', 'responseLimitMultiplier']) document.querySelector(`[name="${name}"]`).addEventListener('input', updateLimit);
+  updateLimit();
 }
 function captureEditor() {
   const form = document.querySelector('#editor');
   if (!form) return;
   const s = state.survey;
   s.spreadsheetId = form.elements.spreadsheetId.value.trim();
+  s.expectedResponses = Number(form.elements.expectedResponses.value);
+  s.responseLimitMultiplier = Number(form.elements.responseLimitMultiplier.value);
   for (const name of ['id', 'title', 'description', 'status']) s[name] = form.elements[name].value;
   for (const name of ['startsAt', 'endsAt']) s[name] = fromLocal(form.elements[name].value);
   s.interview = { enabled: form.elements.aiEnabled.checked, provider: form.elements.provider.value, model: form.elements.model.value, maxTurns: Number(form.elements.maxTurns.value) };
@@ -125,16 +131,17 @@ function questionInput(f, group, value) {
 }
 function questionInterviewInput(field, label, value, attached = false) {
   const session = state.questionInterviews[field.id];
+  const showTitle = !attached || state.survey.showInitialReason;
   const count = session?.response.turns.filter(t => t.role === 'assistant').length || 0;
   const action = (name, text, symbol, style = '') => `<button type="button" class="${style}" data-action="qi-${name}" data-id="${field.id}">${icon(symbol)}${text}</button>`;
   return `<section class="question inline-interview" id="qi-${field.id}" aria-labelledby="qi-title-${field.id}">
-    <div class="section-heading"><h2 id="qi-title-${field.id}">${label}</h2><span class="muted">AIインタビュー${session ? ` · ${session.ready ? '回答済み' : `${count} / ${field.maxTurns}問`}` : ''}</span></div>
-    <label>${attached ? '理由' : '自由記述の回答'}<textarea name="${attached ? 'reasons' : 'answers'}:${field.id}" rows="3" maxlength="3000" ${session ? 'readonly' : ''}>${escape(value)}</textarea></label>
+    <div class="section-heading">${showTitle ? `<h2 id="qi-title-${field.id}">${label}</h2>` : ''}<span ${showTitle ? '' : `id="qi-title-${field.id}"`} class="muted">AIインタビュー${session ? ` · ${session.ready ? '回答済み' : `${count} / ${field.maxTurns}問`}` : ''}</span></div>
+    <label ${attached && !state.survey.showInitialReason ? 'hidden' : ''}>${attached ? '理由' : '自由記述の回答'}<textarea name="${attached ? 'reasons' : 'answers'}:${field.id}" rows="3" maxlength="3000" ${session ? 'readonly' : ''}>${escape(value)}</textarea></label>
     ${session ? `<div class="question-transcript">${session.response.turns.filter((t, i) => !(i === 0 && t.role === 'user' && value)).map(t => `<div class="message ${t.role}"><span class="speaker">${t.role === 'assistant' ? 'AI' : 'あなた'}</span><p>${escape(t.content)}</p></div>`).join('')}</div>` : ''}
     ${session?.ready ? `${session.response.summary ? `<div class="summary"><h3>この設問の要約</h3><p>${escape(session.response.summary)}</p></div>` : '<p class="muted">要約なしで会話を残します。</p>'}<div class="actions">${action('reset', 'やり直す', 'rotate-ccw', 'quiet')}</div>` : session ?
       `<label>AIへの回答<textarea id="qi-reply-${field.id}" data-question-reply="${field.id}" rows="3" maxlength="3000">${escape(session.draftReply || '')}</textarea></label><div class="actions">${action('reply', '回答する', 'arrow-up', 'primary')}${action('finish', '終了して要約', 'check')}${action('finishWithoutSummary', '要約せず終了', 'check-check', 'quiet')}${action('reset', 'やり直す', 'rotate-ccw', 'quiet')}</div>` :
-      `<div class="actions">${action('start', 'AIと対話して回答を深める（任意）', 'messages-square')}</div>`}
-    <p class="muted">回答${field.required ? '必須' : '任意'} · AIインタビューは任意です。開始した場合のみ、この設問の回答をAIサービスに送信します。</p><div id="qi-notice-${field.id}" role="status" aria-live="polite"></div>
+      `<div class="actions">${action('start', 'AIインタビューを利用してみる（任意）', 'messages-square')}</div>`}
+    <p class="muted">AIインタビューを開始した場合のみ、この設問の回答をAIサービスに送信します。</p><div id="qi-notice-${field.id}" role="status" aria-live="polite"></div>
   </section>`;
 }
 function renderSurvey() {
@@ -143,6 +150,9 @@ function renderSurvey() {
     mount(heading(s.title, s.description) + `<section class="empty"><h2>${s.availability === 'scheduled' ? '受付開始前です' : '受付は終了しました'}</h2><p>${escape(period(s))}</p></section>`); return;
   }
   mount(heading(s.title, s.description) + `<div class="survey-meta">${badge('open')}<span>匿名回答</span><span>受付終了：${dateLabel(s.endsAt)}</span></div><form id="answer"><div class="answer-layout ${s.attributes.length ? '' : 'without-attributes'}">${s.attributes.length ? `<aside><h2>回答者情報</h2>${s.attributes.map(f => questionInput(f, 'attributes', state.response.attributes[f.id])).join('')}</aside>` : ''}<section>${s.questions.map(f => questionInput(f, 'answers', state.response.answers[f.id])).join('')}</section></div><div class="answer-footer"><p class="muted">氏名や連絡先など、個人を特定できる情報は記入しないでください。</p><div class="actions"><button type="submit" name="mode" value="save" class="${s.interview.enabled ? '' : 'primary'}">${icon('send')}回答を送信</button>${s.interview.enabled ? `<button type="submit" name="mode" value="interview" class="primary">${icon('messages-square')}AIともう少し振り返る</button>` : ''}</div>${s.interview.enabled ? '<p class="muted">AIインタビューは任意です。選ぶと、回答内容が選択されたAIサービスに送信されます。</p>' : ''}</div></form>`);
+  if (s.interview.enabled || s.questions.some(q => q.type === 'aiInterview' || q.followUp)) {
+    document.querySelector('.survey-meta').insertAdjacentHTML('beforebegin', '<section class="ai-introduction" aria-labelledby="ai-introduction-title"><h2 id="ai-introduction-title">AIインタビュー</h2><p>AIとの対話を通じて回答の理由や背景の言語化をサポートする機能（利用は任意です）</p></section>');
+  }
   watchDeadline();
 }
 function watchDeadline() {
@@ -164,7 +174,7 @@ function collectResponse(form, partial = false) {
     if (f.followUp) {
       state.response.reasons ||= {};
       const reason = String(data.get(`reasons:${f.id}`) || '').trim();
-      if (!partial && f.followUp.required && !reason) throw new Error(`${f.label}の理由を入力してください。`);
+      if (!partial && state.survey.showInitialReason && f.followUp.required && !reason && !locked?.ready) throw new Error(`${f.label}の理由を入力するか、AIインタビューに回答してください。`);
       if (!partial && locked && !locked.ready) throw new Error(`${f.label}のAIインタビューを終了してください。`);
       state.response.reasons[f.id] = reason;
     }
@@ -283,10 +293,14 @@ root.addEventListener('click', event => {
     const reply = session?.draftReply || '';
     if (operation === 'reply' && !reply.trim()) { notice('AIへの回答を入力してください。'); return; }
     run(async () => {
+      const originalLabel = control.innerHTML;
+      control.textContent = '処理中…';
+      try {
       const payload = operation === 'start' ? { responseId: state.response.responseId, answers: { [id]: state.response.answers[id] }, reasons: { [id]: state.response.reasons?.[id] || '' } } : { token: session.token, reply };
       const result = await api(`/api/surveys/${state.survey.id}/interview`, 'POST', { ...payload, questionId: id, action: operation });
       state.questionInterviews[id] = result;
       const scroll = window.scrollY; renderSurvey(); window.scrollTo(0, scroll);
+      } finally { if (control.isConnected) control.innerHTML = originalLabel; }
     }, message => {
       const target = document.getElementById(`qi-notice-${id}`);
       target.className = 'notice error'; target.textContent = message;

@@ -15,3 +15,5 @@ __pycache__/
 credentials*.json
 service-account*.json
 secrets/
+.vercel
+.env*

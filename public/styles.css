@@ -1,6 +1,9 @@
 :root { color-scheme: light; --ink: #202a2d; --muted: #647275; --line: #dce3e2; --green: #147661; --chart-0: #428bc1; --chart-1: #369784; --chart-2: #c07c25; --chart-3: #bf637d; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--ink); background: #f6f8f8; font-size: 15px; letter-spacing: 0; }
 * { box-sizing: border-box; }
 body { margin: 0; }
+.ai-introduction { margin: 0 0 24px; padding: 16px 20px; border-left: 3px solid var(--green); background: #edf5f2; line-height: 1.8; color: var(--ink); overflow-wrap: anywhere; }
+.ai-introduction h2 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+.ai-introduction p { margin: 0; }
 .answer-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
 .attached-question { border-bottom: 1px solid var(--line); margin-bottom: 24px; }
 a { color: var(--green); text-decoration: none; }
@@ -41,6 +44,7 @@ p { line-height: 1.8; margin: 8px 0; overflow-wrap: anywhere; white-space: pre-w
 .survey-list h2 a { color: var(--ink); }
 .empty { text-align: center; padding: 70px 20px; border-top: 1px solid var(--line); color: var(--muted); }
 label { display: flex; flex-direction: column; gap: 8px; font-size: 14px; font-weight: 500; min-width: 0; }
+label[hidden] { display: none; }
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select { border: 1px solid #becbc7; background: white; border-radius: 5px; padding: 10px 11px; width: 100%; min-width: 0; color: var(--ink); }
 textarea { resize: vertical; line-height: 1.65; }
 input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible { outline: 2px solid #248575; outline-offset: 2px; }

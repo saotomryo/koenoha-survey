@@ -32,6 +32,39 @@ async function request(app, url, { method = 'GET', body, cookie, headers = {} } 
 async function login(app) { const r = await request(app, '/api/login', { method: 'POST', body: { password: process.env.ADMIN_PASSWORD } }); assert.equal(r.status, 200); return r.headers['set-cookie'].split(';')[0]; }
 function answers() { return { responseId: randomUUID(), answers: { satisfaction: 4, comment: '実践例が役立ちました' }, attributes: {} }; }
 
+test('response capacity blocks new saves and AI, while allowing saved response retries', async () => {
+  const store = new MemoryStore();
+  store.tables.surveys = [definition({ expectedResponses: 1, responseLimitMultiplier: 1.2 })];
+  let calls = 0;
+  const app = createApp({ store, ai: async () => { calls++; return '質問'; } });
+  const post = (action, body) => request(app, `/api/surveys/event-test/${action}`, { method: 'POST', body });
+  const first = answers();
+  assert.equal((await post('responses', first)).status, 200);
+  assert.equal((await post('responses', answers())).status, 200);
+  assert.equal((await post('responses', answers())).status, 403);
+  assert.equal((await post('responses', first)).status, 200);
+  assert.equal((await post('interview', { ...answers(), action: 'start' })).status, 403);
+  assert.equal(calls, 0);
+  assert.equal(store.tables.responses.length, 2);
+  assert.throws(() => definition({ expectedResponses: -1 }));
+  assert.throws(() => definition({ responseLimitMultiplier: 2.5 }));
+});
+
+test('concurrent interview requests for the same respondent do not call AI twice', async () => {
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const waiting = new Promise(resolve => { release = resolve; });
+  let calls = 0;
+  const app = createApp({ store: new MemoryStore(), ai: async () => { calls++; entered(); await waiting; return '質問'; } });
+  const body = { ...answers(), action: 'start' };
+  const post = () => request(app, '/api/surveys/event-test/interview', { method: 'POST', body });
+  const first = post();
+  await started;
+  try { assert.equal((await post()).status, 429); }
+  finally { release(); await first; }
+  assert.equal(calls, 1);
+});
+
 test('attached interviews preserve choices, reasons, proofs, results and backup', async () => {
   const survey = definition({ questions: [{ id: 'choice', type: 'single', label: '満足度', options: ['満足', '不満'], required: true, followUp: { required: true, maxTurns: 1 } }] });
   const store = new MemoryStore(); store.tables.surveys = [survey]; let calls = 0;
@@ -44,7 +77,7 @@ test('attached interviews preserve choices, reasons, proofs, results and backup'
   } });
   const body = { responseId: randomUUID(), answers: { choice: '不満' }, reasons: { choice: '時間が短い' } };
   const post = (action, value) => request(app, `/api/surveys/event-test/${action}`, { method: 'POST', body: value });
-  assert.equal((await post('responses', { ...body, reasons: {} })).status, 400);
+  assert.equal((await post('responses', { ...body, answers: {} })).status, 400);
   assert.equal((await post('responses', body)).status, 200); assert.equal(calls, 0);
   const next = { ...body, responseId: randomUUID() };
   assert.equal((await post('interview', { ...next, action: 'start', questionId: 'choice', answers: {} })).status, 400);
@@ -161,6 +194,30 @@ test('export groups each question answer, reason, summary and transcript in disp
   const [headers, row] = responseTable(survey, [{ id: 'id', createdAt: 'date', answers: { first: 'はい', second: '感想', last: '末尾' }, reasons: { first: '理由' }, questionInterviews: { first: { summary: '要約1', turns: [{ role: 'user', content: '発言1' }] }, second: { summary: '要約2', turns: [] } } }]);
   assert.deepEqual(headers, ['回答ID', '回答日時', '最初', '最初：理由', '最初：AI要約', '最初：会話履歴', '次', '次：AI要約', '次：会話履歴', '最後', 'AI要約', 'AI会話履歴']);
   assert.deepEqual(row, ['id', 'date', 'はい', '理由', '要約1', '回答者: 発言1', '感想', '要約2', '', '末尾', '', '']);
+});
+test('attached interview starts without a reason but requires the original answer and actual dialogue', async () => {
+  const store = new MemoryStore();
+  store.tables.surveys = [definition({ questions: [{ id: 'rating', type: 'single', label: '満足度', options: ['満足', '不満'], followUp: { required: true, maxTurns: 2 } }] })];
+  let calls = 0;
+  const app = createApp({ store, ai: async (survey, response) => {
+    calls++;
+    assert.match(messagesFor(survey, response)[0].content, /理由はまだ記入されていません/);
+    assert.match(messagesFor(survey, response)[1].content, /不満/);
+    return 'どんな場面でそう感じましたか？';
+  } });
+  const base = { responseId: randomUUID(), answers: { rating: '不満' }, reasons: {} };
+  const post = (path, body) => request(app, `/api/surveys/event-test/${path}`, { method: 'POST', body });
+  assert.equal((await post('interview', { ...base, answers: {}, questionId: 'rating', action: 'start' })).status, 400);
+  assert.equal(calls, 0);
+  const start = await post('interview', { ...base, questionId: 'rating', action: 'start' });
+  assert.equal(start.status, 200); assert.equal(calls, 1);
+  assert.equal((await post('interview', { token: start.data.token, questionId: 'rating', action: 'finishWithoutSummary' })).status, 400);
+  const finish = await post('interview', { token: start.data.token, questionId: 'rating', action: 'finishWithoutSummary', reply: '演習の時間が短かったです' });
+  assert.equal(finish.status, 200);
+  assert.equal((await post('responses', { ...base, questionTokens: { rating: finish.data.token } })).status, 200);
+  assert.equal(store.tables.responses[0].reasons.rating, '');
+  assert.equal(store.tables.responses[0].questionInterviews.rating.turns[1].content, '演習の時間が短かったです');
+  assert.equal((await post('responses', { ...base, responseId: randomUUID() })).status, 200);
 });
 test('period includes start, excludes end, requires finite public schedule', () => {
   const survey = definition();
