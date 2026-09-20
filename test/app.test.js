@@ -32,6 +32,48 @@ async function request(app, url, { method = 'GET', body, cookie, headers = {} } 
 async function login(app) { const r = await request(app, '/api/login', { method: 'POST', body: { password: process.env.ADMIN_PASSWORD } }); assert.equal(r.status, 200); return r.headers['set-cookie'].split(';')[0]; }
 function answers() { return { responseId: randomUUID(), answers: { satisfaction: 4, comment: '実践例が役立ちました' }, attributes: {} }; }
 
+test('summary prompt excludes interview instructions and background information', () => {
+  const survey = definition({ questions: [{ id: 'rating', label: '満足度', type: 'slider', followUp: { maxTurns: 1 }, aiContext: { text: '資料のみの情報' } }] });
+  const response = { questionId: 'rating', answers: { rating: 5 }, reasons: {}, turns: [{ role: 'assistant', content: '理由は？' }, { role: 'user', content: '使い方を学べた' }] };
+  const summary = messagesFor(survey, response, true);
+  assert.match(summary[0].content, /要約担当/);
+  assert.doesNotMatch(summary[0].content, /深掘りしてください|質問は一度に1つ|次の質問本文/);
+  assert.equal(JSON.stringify(summary).includes('資料のみの情報'), false);
+  assert.match(messagesFor(survey, response, false)[0].content, /次の質問本文/);
+});
+
+test('publishing a populated survey ignores JSONB object key order but rejects structural changes', async () => {
+  const store = new MemoryStore();
+  const survey = definition({ status: 'draft', questions: [{ id: 'rating', label: '満足度', type: 'single', options: ['満足', '普通'], followUp: { required: false, maxTurns: 2 } }] });
+  survey.questions[0].followUp = { maxTurns: 2, required: false };
+  store.tables.surveys = [survey];
+  store.tables.responses = [{ id: randomUUID(), surveyId: survey.id }];
+  const app = createApp({ store });
+  const cookie = await login(app);
+  const published = await request(app, `/api/admin/surveys/${survey.id}`, { method: 'PUT', cookie, body: { ...survey, status: 'public' } });
+  assert.equal(published.status, 200);
+  assert.equal(store.tables.surveys.at(-1).status, 'public');
+  const changed = structuredClone(published.data.survey);
+  changed.questions[0].options.reverse();
+  assert.equal((await request(app, `/api/admin/surveys/${survey.id}`, { method: 'PUT', cookie, body: changed })).status, 409);
+});
+
+test('response API delegates database saves to the atomic store operation', async () => {
+  const store = new MemoryStore();
+  let called = 0;
+  store.saveResponse = async (survey, response, clock) => {
+    called++;
+    assert.equal(survey.id, 'event-test');
+    assert.equal(response.answers.satisfaction, 4);
+    assert.equal(typeof clock(), 'number');
+  };
+  store.append = async () => { throw new Error('non-atomic save must not run'); };
+  const app = createApp({ store });
+  const result = await request(app, '/api/surveys/event-test/responses', { method: 'POST', body: answers() });
+  assert.equal(result.status, 200);
+  assert.equal(called, 1);
+});
+
 test('AI background is admin-only, validated, scoped, preserved in backup and omitted from summaries', async () => {
   const context = { text: '管理者の背景情報', files: [{ name: 'slides.md', text: '資料本文' }] };
   const survey = definition({ questions: [

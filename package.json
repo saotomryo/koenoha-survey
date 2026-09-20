@@ -12,11 +12,15 @@
     "dev": "node --env-file-if-exists=.env server.js",
     "start": "node --env-file-if-exists=.env server.js",
     "test": "node --test test/*.test.js",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "db:check": "node --env-file-if-exists=.env scripts/check-db.js",
+    "db:init": "node --env-file-if-exists=.env scripts/check-db.js --initialize",
+    "db:smoke": "node --env-file-if-exists=.env scripts/check-postgres.mjs"
   },
   "dependencies": {
     "google-auth-library": "^10.3.0",
     "lucide": "^0.468.0",
-    "pdfjs-dist": "6.3.289"
+    "pdfjs-dist": "6.3.289",
+    "pg": "8.23.0"
   }
 }

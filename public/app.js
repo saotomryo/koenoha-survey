@@ -43,11 +43,11 @@ function period(survey) { return `${dateLabel(survey.startsAt)} 〜 ${dateLabel(
 function badge(status) { return `<span class="badge ${status}">${statuses[status]}</span>`; }
 function field(id = `q_${crypto.randomUUID().slice(0, 8)}`) { return { id, type: 'longText', label: '', required: false, options: [], min: 1, max: 5, maxTurns: 5 }; }
 function template() {
-  return { id: `event-${crypto.randomUUID().slice(0, 8)}`, title: '勉強会の振り返りアンケート', description: '本日はご参加ありがとうございました。今後の企画の参考に、感想やご意見をお聞かせください。', status: 'draft', startsAt: '', endsAt: '',
+  return { id: `event-${crypto.randomUUID().slice(0, 8)}`, title: 'ご意見・ご感想アンケート', description: '今後の改善の参考に、ご意見やご感想をお聞かせください。', status: 'draft', startsAt: '', endsAt: '',
     attributes: [], questions: [
-      { ...field('satisfaction'), type: 'slider', label: '今回の勉強会の満足度を教えてください。', required: true },
+      { ...field('satisfaction'), type: 'slider', label: '全体的な満足度を教えてください。', required: true },
       { ...field('useful'), type: 'aiInterview', label: '印象に残ったことや、役に立ったことを教えてください。', maxTurns: 3 },
-      { ...field('improvements'), type: 'longText', label: '改善してほしいことや、次回取り上げてほしいテーマはありますか。' }
+      { ...field('improvements'), type: 'longText', label: '改善してほしいことや、ご要望があれば教えてください。' }
     ], interview: { enabled: false, provider: 'openai', model: '', maxTurns: 5 } };
 }
 async function home() {
@@ -65,6 +65,10 @@ async function admin() {
     `<div class="admin-summary"><span>アンケート <strong>${surveys.length}</strong></span><span>回答 <strong>${surveys.reduce((s, x) => s + x.responseCount, 0)}</strong></span></div>` +
     `<div class="table-wrap"><table><thead><tr><th>アンケート</th><th>受付期間</th><th>状態</th><th>回答</th><th>操作</th></tr></thead><tbody>${surveys.map(s => `<tr><td><a href="/admin/edit/${s.id}">${escape(s.title)}</a></td><td>${escape(period(s))}</td><td>${badge(s.availability)}</td><td>${s.responseCount}</td><td><div class="actions"><a href="/admin/results/${s.id}" class="icon-button" aria-label="${escape(s.title)}の集計" title="集計">${icon('chart-no-axes-combined')}</a><a href="/survey/${s.id}" class="icon-button" aria-label="回答画面" title="回答画面">${icon('external-link')}</a><button data-action="copy" data-id="${s.id}" class="icon-button" title="回答URLをコピー" aria-label="回答URLをコピー">${icon('copy')}</button></div></td></tr>`).join('') || '<tr><td colspan="5">アンケートはまだありません。</td></tr>'}</tbody></table></div>
     <section class="settings"><h2>接続・データ管理</h2><div class="connection-list"><span>保存先：${state.settings.storage === 'sheets' ? 'Googleスプレッドシート' : 'ローカル'}</span>${state.settings.providers.map(p => `<span>${escape(p.label)}：${p.configured ? '設定済み' : '未設定'}</span>`).join('')}</div><div class="actions">${state.settings.storage === 'sheets' ? button('initialize', '保存用シートを初期化', 'database') : ''}<a href="/api/admin/backup" class="button" download>${icon('download')}全データJSON</a><label class="button file-button">${icon('upload')}JSONインポート<input id="import-file" type="file" accept="application/json,.json"></label></div></section>`);
+  if (state.settings.storage === 'postgres') {
+    root.querySelector('.connection-list span').textContent = '保存先：PostgreSQL';
+    root.querySelector('.settings .actions').insertAdjacentHTML('afterbegin', button('initialize', 'DBを初期化', 'database'));
+  }
   root.querySelectorAll('[data-action="copy"]').forEach(el => el.insertAdjacentHTML('afterend', `<button type="button" data-action="duplicate" data-id="${el.dataset.id}" class="icon-button" title="アンケートを複製" aria-label="アンケートを複製">${icon('copy-plus')}</button>`));
   lucide.createIcons();
   if (storageError) notice(storageError);
@@ -93,6 +97,11 @@ function editor() {
   const updateLimit = () => { document.querySelector('#response-limit').textContent = `${Math.ceil(Number(document.querySelector('[name="expectedResponses"]').value) * Number(document.querySelector('[name="responseLimitMultiplier"]').value))}件`; };
   for (const name of ['expectedResponses', 'responseLimitMultiplier']) document.querySelector(`[name="${name}"]`).addEventListener('input', updateLimit);
   updateLimit();
+  if (state.settings?.storage === 'postgres') {
+    const label = document.querySelector('[name="spreadsheetId"]').closest('label');
+    label.hidden = true;
+    label.nextElementSibling.textContent = '回答保存先：PostgreSQL';
+  }
 }
 function captureEditor() {
   const form = document.querySelector('#editor');
@@ -361,7 +370,7 @@ root.addEventListener('click', event => {
       const result = await api(`/api/admin/surveys/${control.dataset.id}/duplicate`, 'POST', {});
       location.href = `/admin/edit/${result.survey.id}`;
     }
-    if (action === 'initialize') { await api('/api/admin/storage/initialize', 'POST', {}); await admin(); notice('保存用シートを準備しました。', true); }
+    if (action === 'initialize') { await api('/api/admin/storage/initialize', 'POST', {}); await admin(); notice('保存先を準備しました。', true); }
     if (action === 'copy') { await navigator.clipboard.writeText(`${location.origin}/survey/${control.dataset.id}`); notice('回答URLをコピーしました。', true); }
     if (action === 'finish') { state.interview = await api(`/api/surveys/${state.survey.id}/interview`, 'POST', { token: state.interview.token, action: 'finish', reply: pendingReply }); renderInterview(); }
     if (action === 'save-interview') await saveResponse({ token: state.interview.token });
