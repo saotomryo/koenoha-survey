@@ -32,6 +32,35 @@ async function request(app, url, { method = 'GET', body, cookie, headers = {} } 
 async function login(app) { const r = await request(app, '/api/login', { method: 'POST', body: { password: process.env.ADMIN_PASSWORD } }); assert.equal(r.status, 200); return r.headers['set-cookie'].split(';')[0]; }
 function answers() { return { responseId: randomUUID(), answers: { satisfaction: 4, comment: '実践例が役立ちました' }, attributes: {} }; }
 
+test('AI background is admin-only, validated, scoped, preserved in backup and omitted from summaries', async () => {
+  const context = { text: '管理者の背景情報', files: [{ name: 'slides.md', text: '資料本文' }] };
+  const survey = definition({ questions: [
+    { id: 'first', label: '感想', type: 'text', followUp: {}, aiContext: context },
+    { id: 'second', label: 'その他', type: 'text', aiContext: { text: '別設問の資料' } }
+  ] });
+  const store = new MemoryStore(); store.tables.surveys = [survey];
+  const app = createApp({ store });
+  const publicResult = await request(app, '/api/surveys/event-test');
+  assert.equal(publicResult.raw.includes('管理者の背景情報'), false);
+  assert.equal(publicResult.raw.includes('slides.md'), false);
+  assert.equal(publicResult.data.survey.questions[0].aiContext, undefined);
+  const scoped = { ...survey, questions: [survey.questions[0]] };
+  const response = { questionId: 'first', answers: { first: 'よかった' }, turns: [] };
+  const prompt = JSON.parse(messagesFor(scoped, response)[1].content);
+  assert.deepEqual(prompt.background[0].files, context.files);
+  assert.equal(JSON.stringify(prompt).includes('別設問の資料'), false);
+  assert.deepEqual(JSON.parse(messagesFor(scoped, response, true)[1].content).background, []);
+  const cookie = await login(app);
+  const backup = (await request(app, '/api/admin/backup', { cookie })).data;
+  const target = new MemoryStore(); target.tables = { surveys: [], responses: [] };
+  const targetApp = createApp({ store: target });
+  assert.equal((await request(targetApp, '/api/admin/import', { method: 'POST', cookie: await login(targetApp), body: backup })).status, 200);
+  assert.deepEqual(target.tables.surveys[0].questions[0].aiContext, context);
+  for (const aiContext of [{ text: 'x'.repeat(12001) }, { files: [{ name: 'image.png', text: 'x' }] }, { files: [{ name: 'a.txt', text: '' }] }, { files: Array(4).fill({ name: 'a.txt', text: 'x' }) }]) {
+    assert.throws(() => definition({ questions: [{ id: 'test', label: 'test', type: 'text', aiContext }] }));
+  }
+});
+
 test('response capacity blocks new saves and AI, while allowing saved response retries', async () => {
   const store = new MemoryStore();
   store.tables.surveys = [definition({ expectedResponses: 1, responseLimitMultiplier: 1.2 })];

@@ -4,7 +4,9 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "setup": "node scripts/setup-local.js",
     "dev": "node --env-file-if-exists=.env server.js",
@@ -14,6 +16,7 @@
   },
   "dependencies": {
     "google-auth-library": "^10.3.0",
-    "lucide": "^0.468.0"
+    "lucide": "^0.468.0",
+    "pdfjs-dist": "6.3.289"
   }
 }

@@ -18,7 +18,8 @@ async function api(url, method = 'GET', data) {
 }
 function mount(content) {
   clearInterval(state.timer);
-  root.innerHTML = `<header class="topbar"><a class="brand" href="/">${icon('messages-square')}<span>Koenoha Survey</span></a><nav><a href="/">アンケート</a><a href="/admin">管理</a>${state.admin ? button('logout', 'ログアウト', 'log-out', 'quiet') : ''}</nav></header><main>${content}<div id="notice" role="status" aria-live="polite"></div></main>`;
+  const adminPage = /^\/admin(?:\/|$)/.test(location.pathname);
+  root.innerHTML = `<header class="topbar"><a class="brand" href="/">${icon('messages-square')}<span>Koenoha Survey</span></a><nav><a href="/">アンケート</a>${adminPage ? `<a href="/admin">管理</a>${state.admin ? button('logout', 'ログアウト', 'log-out', 'quiet') : ''}` : ''}</nav></header><main>${content}<div id="notice" role="status" aria-live="polite"></div></main>`;
   lucide.createIcons();
 }
 function notice(message, success = false) {
@@ -77,6 +78,7 @@ function editorField(f, index, group) {
     ${f.type === 'slider' ? `<div class="editor-row"><label>最小値<input data-field="min" type="number" min="0" max="99" value="${f.min}"></label><label>最大値<input data-field="max" type="number" min="1" max="100" value="${f.max}"></label></div>` : ''}
     ${f.type === 'aiInterview' ? `<label>深掘り回数<input data-field="maxTurns" type="number" min="1" max="10" value="${f.maxTurns ?? 5}" required></label>` : ''}
     ${group === 'questions' && f.type !== 'aiInterview' ? `<label class="check"><input data-followup="enabled" type="checkbox" ${f.followUp ? 'checked' : ''}>理由の自由記述と任意のAI深掘りを追加</label>${f.followUp ? `<div class="editor-row"><label class="check"><input data-followup="required" type="checkbox" ${f.followUp.required ? 'checked' : ''}>理由の入力を必須にする</label><label>深掘り回数<input data-followup="maxTurns" type="number" min="1" max="10" value="${f.followUp.maxTurns}" required></label></div>` : ''}` : ''}
+    ${group === 'questions' ? `<details class="context-editor"><summary>AI向け補足情報</summary><p class="muted">AI利用時に外部AIサービスへ送信されます。秘密情報・個人情報は入力しないでください。</p><label>補足テキスト<textarea data-context="text" rows="4" maxlength="12000">${escape(f.aiContext?.text || '')}</textarea></label><label class="button file-button">${icon('paperclip')}参考ファイルを取り込む<input type="file" data-context-file accept=".txt,.md,.pdf"></label><p class="muted">TXT・Markdown（UTF-8）・文字を含むPDF。1件2MB・12000文字、PDFは50ページまで。3件まで、設問全体24000文字まで。原本は保存しません。</p>${(f.aiContext?.files || []).map((file, i) => `<div><div class="actions"><strong>${escape(file.name)}</strong><label class="button file-button">${icon('replace')}差し替え<input type="file" data-context-file data-replace="${i}" accept=".txt,.md,.pdf"></label><button type="button" data-action="context-remove" data-index="${index}" data-file="${i}" class="icon-button" title="参考ファイルを削除" aria-label="参考ファイルを削除">${icon('trash-2')}</button></div><label>抽出テキスト（編集可）<textarea data-context-document="${i}" rows="5" maxlength="12000">${escape(file.text)}</textarea></label></div>`).join('')}</details>` : ''}
   </section>`;
 }
 function editor() {
@@ -104,6 +106,8 @@ function captureEditor() {
   s.interview = { enabled: form.elements.aiEnabled.checked, provider: form.elements.provider.value, model: form.elements.model.value, maxTurns: Number(form.elements.maxTurns.value) };
   form.querySelectorAll('.field-editor').forEach(el => {
     const f = s[el.dataset.group][Number(el.dataset.index)];
+    const context = el.querySelector('[data-context="text"]');
+    if (context) f.aiContext = { text: context.value, files: (f.aiContext?.files || []).map((file, i) => ({ ...file, text: el.querySelector(`[data-context-document="${i}"]`).value })) };
     const follow = el.querySelector('[data-followup="enabled"]');
     if (follow?.checked && el.querySelector('[data-field="type"]').value !== 'aiInterview') f.followUp = { required: Boolean(el.querySelector('[data-followup="required"]')?.checked), maxTurns: Number(el.querySelector('[data-followup="maxTurns"]')?.value || 5) };
     else delete f.followUp;
@@ -245,6 +249,27 @@ root.addEventListener('input', event => {
   }
 });
 root.addEventListener('change', event => {
+  if (event.target.matches('[data-context-file]')) {
+    const input = event.target, file = input.files[0];
+    if (!file) return;
+    const index = Number(input.closest('.field-editor').dataset.index);
+    const replace = input.dataset.replace;
+    captureEditor();
+    run(async () => {
+      const context = state.survey.questions[index].aiContext;
+      if (replace === undefined && context.files.length >= 3) throw new Error('参考ファイルは3件までです。');
+      const { extractContextFile } = await import('./context-files.js');
+      const document = await extractContextFile(file);
+      const files = [...context.files];
+      if (replace === undefined) files.push(document); else files[Number(replace)] = document;
+      if (context.text.length + files.reduce((n, f) => n + f.text.length, 0) > 24000) throw new Error('設問の補足情報は合計24000文字までです。');
+      context.files = files;
+      editor();
+      root.querySelector(`.field-editor[data-group="questions"][data-index="${index}"] details`).open = true;
+      notice('抽出内容を確認・編集してから、アンケートを保存してください。', true);
+    }).finally(() => { input.value = ''; });
+    return;
+  }
   if (event.target.matches('[data-field="type"], [data-followup="enabled"], select[name="provider"]')) { captureEditor(); editor(); }
   if (event.target.id === 'import-file') {
     const file = event.target.files[0];
@@ -285,6 +310,13 @@ root.addEventListener('click', event => {
   const control = event.target.closest('[data-action]');
   if (!control || state.busy) return;
   const action = control.dataset.action;
+  if (action === 'context-remove') {
+    captureEditor();
+    state.survey.questions[Number(control.dataset.index)].aiContext.files.splice(Number(control.dataset.file), 1);
+    editor();
+    root.querySelector(`.field-editor[data-group="questions"][data-index="${control.dataset.index}"] details`).open = true;
+    return;
+  }
   if (action.startsWith('qi-')) {
     const id = control.dataset.id, operation = action.slice(3);
     try { collectResponse(document.querySelector('#answer'), true); } catch (error) { notice(error.message); return; }

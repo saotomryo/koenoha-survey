@@ -5,7 +5,7 @@ import path from 'node:path';
 import app from './api/index.js';
 
 const publicDir = fileURLToPath(new URL('./public/', import.meta.url));
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf' };
 export function createWebServer(handler = app) {
 return createServer(async (req, res) => {
   if (req.url.startsWith('/api/')) return handler(req, res);
