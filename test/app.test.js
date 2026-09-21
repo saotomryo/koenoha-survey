@@ -32,6 +32,53 @@ async function request(app, url, { method = 'GET', body, cookie, headers = {} } 
 async function login(app) { const r = await request(app, '/api/login', { method: 'POST', body: { password: process.env.ADMIN_PASSWORD } }); assert.equal(r.status, 200); return r.headers['set-cookie'].split(';')[0]; }
 function answers() { return { responseId: randomUUID(), answers: { satisfaction: 4, comment: '実践例が役立ちました' }, attributes: {} }; }
 
+test('mandatory AI interviews require a completed signed reply, not just initial text', async () => {
+  for (const attached of [true, false]) {
+    const store = new MemoryStore();
+    store.tables.surveys = [definition({ questions: [attached
+      ? { id: 'detail', label: '感想', type: 'single', options: ['満足'], followUp: { interviewRequired: true, maxTurns: 1 } }
+      : { id: 'detail', label: '感想', type: 'aiInterview', interviewRequired: true, maxTurns: 1 }
+    ] })];
+    const app = createApp({ store, ai: async (_s, _r, summary) => summary ? '要約' : '理由は？' });
+    const post = (path, body) => request(app, `/api/surveys/event-test/${path}`, { method: 'POST', body });
+    const base = { responseId: randomUUID(), answers: { detail: attached ? '満足' : '最初の自由記述' }, reasons: { detail: '最初の理由' } };
+    assert.equal((await post('responses', base)).status, 400);
+    const start = await post('interview', { ...base, questionId: 'detail', action: 'start' });
+    assert.equal(start.status, 200);
+    assert.equal((await post('responses', { ...base, questionTokens: { detail: start.data.token } })).status, 400);
+    for (const action of ['finish', 'finishWithoutSummary']) {
+      assert.equal((await post('interview', { questionId: 'detail', token: start.data.token, action })).status, 400);
+    }
+    const finish = await post('interview', { questionId: 'detail', token: start.data.token, action: 'reply', reply: '具体例が参考になりました' });
+    assert.equal(finish.status, 200);
+    assert.equal(finish.data.ready, true);
+    assert.equal(finish.data.response.summary, '要約');
+    assert.equal((await post('responses', { ...base, questionTokens: { detail: finish.data.token } })).status, 200);
+    assert.equal(store.tables.responses.length, 1);
+    const cookie = await login(app);
+    const backup = (await request(app, '/api/admin/backup', { cookie })).data;
+    const target = new MemoryStore(); target.tables = { surveys: [], responses: [] };
+    const targetApp = createApp({ store: target });
+    const targetCookie = await login(targetApp);
+    assert.equal((await request(targetApp, '/api/admin/import', { method: 'POST', cookie: targetCookie, body: backup })).status, 200);
+    assert.deepEqual(target.tables.responses[0].questionInterviews, store.tables.responses[0].questionInterviews);
+  }
+});
+
+test('mandatory AI setting survives normalization, public data, duplication and structure protection', async () => {
+  const store = new MemoryStore();
+  store.tables.surveys = [definition({ questions: [{ id: 'detail', label: '感想', type: 'aiInterview', interviewRequired: true }] })];
+  const app = createApp({ store });
+  assert.equal((await request(app, '/api/surveys/event-test')).data.survey.questions[0].interviewRequired, true);
+  const cookie = await login(app);
+  const copy = await request(app, '/api/admin/surveys/event-test/duplicate', { method: 'POST', cookie, body: {} });
+  assert.equal(copy.data.survey.questions[0].interviewRequired, true);
+  store.tables.responses = [{ surveyId: 'event-test', id: randomUUID() }];
+  const changed = structuredClone(store.tables.surveys[0]);
+  changed.questions[0].interviewRequired = false;
+  assert.equal((await request(app, '/api/admin/surveys/event-test', { method: 'PUT', cookie, body: changed })).status, 409);
+});
+
 test('summary prompt excludes interview instructions and background information', () => {
   const survey = definition({ questions: [{ id: 'rating', label: '満足度', type: 'slider', followUp: { maxTurns: 1 }, aiContext: { text: '資料のみの情報' } }] });
   const response = { questionId: 'rating', answers: { rating: 5 }, reasons: {}, turns: [{ role: 'assistant', content: '理由は？' }, { role: 'user', content: '使い方を学べた' }] };

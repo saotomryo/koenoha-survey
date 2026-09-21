@@ -8,6 +8,7 @@ const toLocal = value => value ? new Date(new Date(value).getTime() - new Date(v
 const fromLocal = value => value ? new Date(value).toISOString() : '';
 const statuses = { draft: '下書き', open: '受付中', scheduled: '受付開始前', closed: '受付終了' };
 const typeNames = { single: '単一選択', multiple: '複数選択', slider: '数値評価', text: '短文', longText: '自由記述', aiInterview: 'AIインタビュー' };
+const isInterviewRequired = field => Boolean(field.type === 'aiInterview' ? field.interviewRequired : field.followUp?.interviewRequired);
 let state = { admin: false, survey: null, settings: null, response: null, interview: null, questionInterviews: {}, busy: false, timer: null };
 
 async function api(url, method = 'GET', data) {
@@ -80,8 +81,8 @@ function editorField(f, index, group) {
     <div class="editor-row"><label class="grow">項目名<input data-field="label" value="${escape(f.label)}" required maxlength="300"></label><label>回答形式<select data-field="type">${types.map(([value, label]) => `<option value="${value}" ${f.type === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label class="check"><input data-field="required" type="checkbox" ${f.required ? 'checked' : ''}>必須</label></div>
     ${['single', 'multiple'].includes(f.type) ? `<label>選択肢（1行に1つ）<textarea data-field="options" rows="3">${escape(f.options.join('\n'))}</textarea></label>` : ''}
     ${f.type === 'slider' ? `<div class="editor-row"><label>最小値<input data-field="min" type="number" min="0" max="99" value="${f.min}"></label><label>最大値<input data-field="max" type="number" min="1" max="100" value="${f.max}"></label></div>` : ''}
-    ${f.type === 'aiInterview' ? `<label>深掘り回数<input data-field="maxTurns" type="number" min="1" max="10" value="${f.maxTurns ?? 5}" required></label>` : ''}
-    ${group === 'questions' && f.type !== 'aiInterview' ? `<label class="check"><input data-followup="enabled" type="checkbox" ${f.followUp ? 'checked' : ''}>理由の自由記述と任意のAI深掘りを追加</label>${f.followUp ? `<div class="editor-row"><label class="check"><input data-followup="required" type="checkbox" ${f.followUp.required ? 'checked' : ''}>理由の入力を必須にする</label><label>深掘り回数<input data-followup="maxTurns" type="number" min="1" max="10" value="${f.followUp.maxTurns}" required></label></div>` : ''}` : ''}
+    ${f.type === 'aiInterview' ? `<label class="check"><input data-field="interviewRequired" type="checkbox" ${f.interviewRequired ? 'checked' : ''}>AIインタビューを必須にする</label><label>深掘り回数<input data-field="maxTurns" type="number" min="1" max="10" value="${f.maxTurns ?? 5}" required></label>` : ''}
+    ${group === 'questions' && f.type !== 'aiInterview' ? `<label class="check"><input data-followup="enabled" type="checkbox" ${f.followUp ? 'checked' : ''}>AIインタビューを追加</label>${f.followUp ? `<div class="editor-row"><label class="check"><input data-followup="interviewRequired" type="checkbox" ${f.followUp.interviewRequired ? 'checked' : ''}>AIインタビューを必須にする</label><label>深掘り回数<input data-followup="maxTurns" type="number" min="1" max="10" value="${f.followUp.maxTurns}" required></label></div>` : ''}` : ''}
     ${group === 'questions' ? `<details class="context-editor"><summary>AI向け補足情報</summary><p class="muted">AI利用時に外部AIサービスへ送信されます。秘密情報・個人情報は入力しないでください。</p><label>補足テキスト<textarea data-context="text" rows="4" maxlength="12000">${escape(f.aiContext?.text || '')}</textarea></label><label class="button file-button">${icon('paperclip')}参考ファイルを取り込む<input type="file" data-context-file accept=".txt,.md,.pdf"></label><p class="muted">TXT・Markdown（UTF-8）・文字を含むPDF。1件2MB・12000文字、PDFは50ページまで。3件まで、設問全体24000文字まで。原本は保存しません。</p>${(f.aiContext?.files || []).map((file, i) => `<div><div class="actions"><strong>${escape(file.name)}</strong><label class="button file-button">${icon('replace')}差し替え<input type="file" data-context-file data-replace="${i}" accept=".txt,.md,.pdf"></label><button type="button" data-action="context-remove" data-index="${index}" data-file="${i}" class="icon-button" title="参考ファイルを削除" aria-label="参考ファイルを削除">${icon('trash-2')}</button></div><label>抽出テキスト（編集可）<textarea data-context-document="${i}" rows="5" maxlength="12000">${escape(file.text)}</textarea></label></div>`).join('')}</details>` : ''}
   </section>`;
 }
@@ -118,7 +119,7 @@ function captureEditor() {
     const context = el.querySelector('[data-context="text"]');
     if (context) f.aiContext = { text: context.value, files: (f.aiContext?.files || []).map((file, i) => ({ ...file, text: el.querySelector(`[data-context-document="${i}"]`).value })) };
     const follow = el.querySelector('[data-followup="enabled"]');
-    if (follow?.checked && el.querySelector('[data-field="type"]').value !== 'aiInterview') f.followUp = { required: Boolean(el.querySelector('[data-followup="required"]')?.checked), maxTurns: Number(el.querySelector('[data-followup="maxTurns"]')?.value || 5) };
+    if (follow?.checked && el.querySelector('[data-field="type"]').value !== 'aiInterview') f.followUp = { required: Boolean(f.followUp?.required), maxTurns: Number(el.querySelector('[data-followup="maxTurns"]')?.value || 5), ...(el.querySelector('[data-followup="interviewRequired"]')?.checked ? { interviewRequired: true } : {}) };
     else delete f.followUp;
     el.querySelectorAll('[data-field]').forEach(input => {
       f[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.dataset.field === 'options' ? input.value.split('\n').map(v => v.trim()).filter(Boolean) : ['min', 'max', 'maxTurns'].includes(input.dataset.field) ? Number(input.value) : input.value;
@@ -148,12 +149,12 @@ function questionInterviewInput(field, label, value, attached = false) {
   const count = session?.response.turns.filter(t => t.role === 'assistant').length || 0;
   const action = (name, text, symbol, style = '') => `<button type="button" class="${style}" data-action="qi-${name}" data-id="${field.id}">${icon(symbol)}${text}</button>`;
   return `<section class="question inline-interview" id="qi-${field.id}" aria-labelledby="qi-title-${field.id}">
-    <div class="section-heading">${showTitle ? `<h2 id="qi-title-${field.id}">${label}</h2>` : ''}<span ${showTitle ? '' : `id="qi-title-${field.id}"`} class="muted">AIインタビュー${session ? ` · ${session.ready ? '回答済み' : `${count} / ${field.maxTurns}問`}` : ''}</span></div>
+    <div class="section-heading">${showTitle ? `<h2 id="qi-title-${field.id}">${label}</h2>` : ''}<span ${showTitle ? '' : `id="qi-title-${field.id}"`} class="muted">AIインタビュー${isInterviewRequired(field) ? '（必須）' : ''}${session ? ` · ${session.ready ? '回答済み' : `${count} / ${field.maxTurns}問`}` : ''}</span></div>
     <label ${attached && !state.survey.showInitialReason ? 'hidden' : ''}>${attached ? '理由' : '自由記述の回答'}<textarea name="${attached ? 'reasons' : 'answers'}:${field.id}" rows="3" maxlength="3000" ${session ? 'readonly' : ''}>${escape(value)}</textarea></label>
     ${session ? `<div class="question-transcript">${session.response.turns.filter((t, i) => !(i === 0 && t.role === 'user' && value)).map(t => `<div class="message ${t.role}"><span class="speaker">${t.role === 'assistant' ? 'AI' : 'あなた'}</span><p>${escape(t.content)}</p></div>`).join('')}</div>` : ''}
     ${session?.ready ? `${session.response.summary ? `<div class="summary"><h3>この設問の要約</h3><p>${escape(session.response.summary)}</p></div>` : '<p class="muted">要約なしで会話を残します。</p>'}<div class="actions">${action('reset', 'やり直す', 'rotate-ccw', 'quiet')}</div>` : session ?
       `<label>AIへの回答<textarea id="qi-reply-${field.id}" data-question-reply="${field.id}" rows="3" maxlength="3000">${escape(session.draftReply || '')}</textarea></label><div class="actions">${action('reply', '回答する', 'arrow-up', 'primary')}${action('finish', '終了して要約', 'check')}${action('finishWithoutSummary', '要約せず終了', 'check-check', 'quiet')}${action('reset', 'やり直す', 'rotate-ccw', 'quiet')}</div>` :
-      `<div class="actions">${action('start', 'AIインタビューを利用してみる（任意）', 'messages-square')}</div>`}
+      `<div class="actions">${action('start', `AIインタビューを利用してみる（${isInterviewRequired(field) ? '必須' : '任意'}）`, 'messages-square')}</div>`}
     <p class="muted">AIインタビューを開始した場合のみ、この設問の回答をAIサービスに送信します。</p><div id="qi-notice-${field.id}" role="status" aria-live="polite"></div>
   </section>`;
 }
@@ -164,7 +165,7 @@ function renderSurvey() {
   }
   mount(heading(s.title, s.description) + `<div class="survey-meta">${badge('open')}<span>匿名回答</span><span>受付終了：${dateLabel(s.endsAt)}</span></div><form id="answer"><div class="answer-layout ${s.attributes.length ? '' : 'without-attributes'}">${s.attributes.length ? `<aside><h2>回答者情報</h2>${s.attributes.map(f => questionInput(f, 'attributes', state.response.attributes[f.id])).join('')}</aside>` : ''}<section>${s.questions.map(f => questionInput(f, 'answers', state.response.answers[f.id])).join('')}</section></div><div class="answer-footer"><p class="muted">氏名や連絡先など、個人を特定できる情報は記入しないでください。</p><div class="actions"><button type="submit" name="mode" value="save" class="${s.interview.enabled ? '' : 'primary'}">${icon('send')}回答を送信</button>${s.interview.enabled ? `<button type="submit" name="mode" value="interview" class="primary">${icon('messages-square')}AIともう少し振り返る</button>` : ''}</div>${s.interview.enabled ? '<p class="muted">AIインタビューは任意です。選ぶと、回答内容が選択されたAIサービスに送信されます。</p>' : ''}</div></form>`);
   if (s.interview.enabled || s.questions.some(q => q.type === 'aiInterview' || q.followUp)) {
-    document.querySelector('.survey-meta').insertAdjacentHTML('beforebegin', '<section class="ai-introduction" aria-labelledby="ai-introduction-title"><h2 id="ai-introduction-title">AIインタビュー</h2><p>AIとの対話を通じて回答の理由や背景の言語化をサポートする機能（利用は任意です）</p></section>');
+    document.querySelector('.survey-meta').insertAdjacentHTML('beforebegin', `<section class="ai-introduction" aria-labelledby="ai-introduction-title"><h2 id="ai-introduction-title">AIインタビュー</h2><p>AIとの対話を通じて回答の理由や背景の言語化をサポートする機能${s.questions.some(isInterviewRequired) ? '' : '（利用は任意です）'}</p></section>`);
   }
   watchDeadline();
 }
@@ -184,6 +185,7 @@ function collectResponse(form, partial = false) {
     const key = `${target}:${f.id}`;
     const locked = f.followUp && state.questionInterviews[f.id];
     const value = locked ? state.response[target][f.id] : f.type === 'multiple' ? data.getAll(key) : f.type === 'slider' && form.elements.namedItem(key).dataset.answered !== 'true' ? '' : data.get(key) ?? '';
+    if (!partial && isInterviewRequired(f) && !state.questionInterviews[f.id]?.ready) throw new Error(`${f.label}のAIインタビューに回答して終了してください。`);
     if (f.followUp) {
       state.response.reasons ||= {};
       const reason = String(data.get(`reasons:${f.id}`) || '').trim();
