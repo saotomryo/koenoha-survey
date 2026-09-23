@@ -82,7 +82,7 @@ npm run dev
 | `DATABASE_POOL_MAX` | サーバープロセスごとの最大接続数。既定3、1〜10 |
 | `DATABASE_SSL_CA` | 独自CAが必要なDBのPEM証明書（任意） |
 | `OPENAI_API_KEY` | OpenAIのAPIキー |
-| `OPENAI_MODEL` | OpenAIの既定モデル。コードの既定値は `gpt-5.4-nano` |
+| `OPENAI_MODEL` | OpenAIの既定モデル。コードの既定値は `gpt-6-luna` |
 | `ANTHROPIC_API_KEY` | ClaudeのAPIキー |
 | `ANTHROPIC_MODEL` | Claudeを使用する場合のモデルID |
 | `GOOGLE_SPREADSHEET_ID` | 共通の管理用スプレッドシートID |
