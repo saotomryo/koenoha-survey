@@ -36,7 +36,19 @@ try {
   const fields = page.locator('.field-editor[data-group="questions"]');
   await fields.first().waitFor();
   assert.equal(await page.getByText('理由の入力を必須にする', { exact: true }).count(), 0);
-  for (const i of [0, 1]) await fields.nth(i).getByLabel('AIインタビューを必須にする', { exact: true }).check();
+  for (const i of [0, 1]) {
+    const required = fields.nth(i).getByLabel('必須', { exact: true });
+    const aiRequired = fields.nth(i).getByLabel('AIインタビューを必須にする', { exact: true });
+    assert.equal(await aiRequired.isDisabled(), true);
+    await required.check();
+    await aiRequired.check();
+    await required.uncheck();
+    assert.equal(await aiRequired.isChecked(), false);
+    assert.equal(await aiRequired.isDisabled(), true);
+    await required.check();
+    assert.equal(await aiRequired.isChecked(), false);
+    await aiRequired.check();
+  }
   await page.getByRole('button', { name: '保存する', exact: true }).click();
   await page.getByText('保存しました。', { exact: true }).waitFor();
   await page.reload();
@@ -44,11 +56,11 @@ try {
   assert.equal(tables.surveys.at(-1).questions[0].followUp.required, true);
   await page.goto(`${base}/survey/${survey.id}`);
   await page.getByRole('radio', { name: '満足', exact: true }).check();
-  assert.equal(await page.getByRole('button', { name: 'AIインタビューを利用してみる（必須）', exact: true }).count(), 2);
-  assert.equal(await page.getByRole('button', { name: 'AIインタビューを利用してみる（任意）', exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'AIインタビューを利用してみる（必須）', exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'AIインタビューを利用してみる（任意）', exact: true }).count(), 0);
   assert.equal(await page.locator('.ai-introduction p').innerText(), 'AIとの対話を通じて回答の理由や背景の言語化をサポートする機能');
-  await page.getByRole('button', { name: '回答を送信', exact: true }).click();
-  await page.getByText('満足度のAIインタビューに回答して終了してください。', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '次へ進む', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '回答を送信', exact: true }).count(), 0);
   assert.equal(tables.responses.length, 0);
   for (const id of ['rating', 'comment']) {
     const section = page.locator(`#qi-${id}`);
@@ -59,7 +71,16 @@ try {
     await section.getByLabel('AIへの回答', { exact: true }).fill('具体例が役立ちました');
     await section.getByRole('button', { name: '回答する', exact: true }).click();
     await section.getByRole('heading', { name: 'この設問の要約', exact: true }).waitFor();
+    await page.getByRole('button', { name: '次へ進む', exact: true }).click();
   }
+  await page.getByRole('heading', { name: '設問 3 / 3', exact: true }).waitFor();
+  await page.getByRole('button', { name: '戻る', exact: true }).click();
+  await page.getByRole('heading', { name: 'この設問の要約', exact: true }).waitFor();
+  await page.getByRole('button', { name: '次へ進む', exact: true }).click();
+  await page.getByRole('button', { name: 'この回答で次へ進む', exact: true }).click();
+  await page.getByRole('heading', { name: '回答内容の確認', exact: true }).waitFor();
+  assert.equal(await page.getByText('AIインタビューで回答済み', { exact: true }).count(), 1);
+  assert.equal(tables.responses.length, 0);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: '/tmp/koenoha-required-interview-mobile.png', fullPage: true });

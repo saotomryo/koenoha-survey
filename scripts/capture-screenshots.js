@@ -37,8 +37,8 @@ try {
   await mkdir('docs/screenshots', { recursive: true });
   await page.goto(`${base}/survey/${survey.id}`);
   await page.getByRole('radio', { name: '満足', exact: true }).check();
-  await page.getByRole('textbox', { name: '理由', exact: true }).fill('業務で使える具体的な実例を知ることができました。');
-  await page.getByRole('button', { name: 'AIと対話して回答を深める（任意）' }).click();
+  await page.screenshot({ path: 'docs/screenshots/survey.png' });
+  await page.getByRole('button', { name: 'AIインタビューを利用してみる（任意）', exact: true }).click();
   await page.getByRole('textbox', { name: 'AIへの回答', exact: true }).waitFor();
   await page.screenshot({ path: 'docs/screenshots/interview.png' });
   const login = await page.request.post(`${base}/api/login`, { headers: { 'x-survey-request': '1' }, data: { password: process.env.ADMIN_PASSWORD } });
@@ -49,7 +49,7 @@ try {
   await page.goto(`${base}/admin/results/${survey.id}`);
   await page.getByRole('heading', { name: survey.title, exact: true }).waitFor();
   await page.screenshot({ path: 'docs/screenshots/results.png' });
-  console.log('Captured 3 screenshots with fictional data.');
+  console.log('Captured 4 screenshots with fictional data.');
 } finally {
   await browser?.close();
   await new Promise(resolve => server.close(resolve));
