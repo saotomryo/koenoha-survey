@@ -257,6 +257,7 @@ function renderInterview() {
 async function results(id) {
   state.settings = await api('/api/admin/settings');
   const data = await api(`/api/admin/surveys/${id}/results`);
+  state.survey = data.survey;
   const reasonSections = data.fields.filter(f => f.followUp).map(f => `<section class="result-field"><h2>${escape(f.label)}：理由</h2><ul class="text-results">${f.reasons.map(r => `<li><strong>${escape(Array.isArray(r.answer) ? r.answer.join(' / ') : r.answer)}</strong><p>${escape(r.reason)}</p></li>`).join('') || '<li>理由の回答はまだありません。</li>'}</ul></section>`).join('');
   // Expand each answer into distinct interview entries, keeping legacy interviews visible.
   data.responses = data.responses.flatMap(r => [
@@ -270,6 +271,7 @@ async function results(id) {
   document.querySelector('.results-grid').insertAdjacentHTML('beforeend', reasonSections);
   if (state.settings.storage === 'sheets') document.querySelector('.page-heading .actions').insertAdjacentHTML('afterbegin', `<button type="button" data-action="sheet-export" data-id="${id}">${icon('table-2')}スプレッドシートに表を出力</button>`);
   document.querySelector('.page-heading .actions').insertAdjacentHTML('afterbegin', `<a class="button" href="/api/admin/surveys/${id}/backup" download>${icon('download')}アンケートJSON出力</a>`);
+  document.querySelector('.interview-results').insertAdjacentHTML('afterend', `<section class="result-field"><h2>試用後の回答削除</h2><p>このアンケートの全回答・AI会話・要約を削除し、下書きに戻します。URLは変更されず、設問を編集して再公開できます。必要なデータは先にJSON出力で保存してください。</p><button type="button" data-action="reset-responses" data-id="${id}">${icon('trash-2')}全回答を削除して下書きに戻す</button></section>`);
   lucide.createIcons();
 }
 async function route() {
@@ -415,6 +417,11 @@ root.addEventListener('click', event => {
     if (action === 'sheet-export') {
       const result = await api(`/api/admin/surveys/${control.dataset.id}/sheet-export`, 'POST', {});
       notice(`${result.tab} に${result.count}件を表形式で出力しました。`, true);
+    }
+    if (action === 'reset-responses') {
+      if (!confirm(`「${state.survey.title}」の全回答・AI会話・要約を削除します。元に戻せません。下書きに戻し、同じURLで編集できる状態にします。続けますか？`)) return;
+      const result = await api(`/api/admin/surveys/${control.dataset.id}/reset-responses`, 'POST', { confirmSurveyId: control.dataset.id, revision: state.survey.updatedAt });
+      location.href = `/admin/edit/${result.survey.id}`;
     }
     if (action === 'logout') { await api('/api/logout', 'POST', {}); state.admin = false; login(); }
     if (action === 'duplicate') {

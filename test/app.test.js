@@ -4,7 +4,10 @@ import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../lib/app.js';
 import { normalizeSurvey, availability, buildResults, toCsv, responseTable } from '../lib/domain.js';
-import { SheetsStore } from '../lib/storage.js';
+import { SheetsStore, LocalStore, getSurvey, getResponses } from '../lib/storage.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { messagesFor } from '../lib/ai.js';
 
 process.env.ADMIN_PASSWORD = 'unit-test-password-only';
@@ -31,6 +34,68 @@ async function request(app, url, { method = 'GET', body, cookie, headers = {} } 
 }
 async function login(app) { const r = await request(app, '/api/login', { method: 'POST', body: { password: process.env.ADMIN_PASSWORD } }); assert.equal(r.status, 200); return r.headers['set-cookie'].split(';')[0]; }
 function answers() { return { responseId: randomUUID(), answers: { satisfaction: 4, comment: '実践例が役立ちました' }, attributes: {} }; }
+
+test('reset deletes only the chosen survey, requires admin confirmation, and permits same-URL edits', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'koenoha-reset-'));
+  try {
+    const store = new LocalStore(dir);
+    const survey = definition();
+    await store.append('surveys', survey);
+    await store.append('responses', { id: 'test-response', surveyId: survey.id, turns: [{ role: 'user', content: 'test' }] });
+    await store.append('responses', { id: 'other-response', surveyId: 'other-survey' });
+    const app = createApp({ store });
+    const url = `/api/admin/surveys/${survey.id}/reset-responses`;
+    const body = { confirmSurveyId: survey.id, revision: survey.updatedAt };
+    assert.equal((await request(app, url, { method: 'POST', body })).status, 401);
+    const cookie = await login(app);
+    assert.equal((await request(app, url, { method: 'POST', cookie, body: {} })).status, 400);
+    assert.equal((await request(app, url, { method: 'POST', cookie, body: { ...body, revision: 'stale' } })).status, 409);
+    const reset = await request(app, url, { method: 'POST', cookie, body });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.data.deletedCount, 1);
+    assert.equal(reset.data.survey.id, survey.id);
+    assert.equal((await getSurvey(store, survey.id)).status, 'draft');
+    assert.notEqual(reset.data.survey.updatedAt, survey.updatedAt);
+    assert.equal((await getResponses(store, survey.id)).length, 0);
+    assert.equal((await getResponses(store, 'other-survey')).length, 1);
+    const updated = { ...reset.data.survey, status: 'public', questions: [{ id: 'new_question', label: '新しい質問', type: 'text' }] };
+    assert.equal((await request(app, `/api/admin/surveys/${survey.id}`, { method: 'PUT', cookie, body: updated })).status, 200);
+    assert.equal((await request(app, `/api/surveys/${survey.id}`)).data.survey.questions[0].id, 'new_question');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('Sheets reset clears dedicated raw/display tabs and only matching legacy rows', async () => {
+  const survey = definition();
+  const store = new SheetsStore({ client: {}, spreadsheetId: 'common' });
+  const cleared = [];
+  let saved;
+  store.append = async (_table, record) => { saved = record; };
+  store.records = async table => table === 'surveys' ? [survey] : [{ id: 'one', surveyId: survey.id }];
+  const target = new SheetsStore({ client: {}, spreadsheetId: 'destination' });
+  store.destination = () => target;
+  target.readOptional = async () => [{ id: 'one', surveyId: survey.id }];
+  target.request = async (endpoint, options) => {
+    if (endpoint.startsWith('?')) return { sheets: ['responses_event-test', 'answers_event-test'].map(title => ({ properties: { title } })) };
+    if (endpoint.includes('A1%3AB1')) return { values: [['回答ID', '回答日時']] };
+    if (endpoint === '/values:batchClear') { cleared.push(['destination', options.data.ranges]); return {}; }
+    throw new Error(endpoint);
+  };
+  store.readOptional = async () => [];
+  store.request = async (endpoint, options) => {
+    if (endpoint.startsWith('?')) return { sheets: [{ properties: { title: 'responses' } }] };
+    if (endpoint === '/values:batchClear') { cleared.push(['common', options.data.ranges]); return {}; }
+    return { values: [
+      ['one', '', '', '', '', JSON.stringify({ surveyId: survey.id })],
+      ['other', '', '', '', '', JSON.stringify({ surveyId: 'other-survey' })]
+    ] };
+  };
+  assert.equal(await store.resetResponses({ ...survey, status: 'draft' }), 1);
+  assert.equal(saved.status, 'draft');
+  assert.deepEqual(cleared, [
+    ['destination', ["'responses_event-test'!A2:M", "'answers_event-test'"]],
+    ['common', ["'responses'!A2:M2"]]
+  ]);
+});
 
 test('mandatory AI interviews require a completed signed reply, not just initial text', async () => {
   for (const attached of [true, false]) {

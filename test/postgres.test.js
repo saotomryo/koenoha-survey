@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { postgresConfig, PostgresStore, databaseError } from '../lib/postgres.js';
 
+test('reset locks the survey and removes only its responses in one transaction', async () => {
+  const calls = [];
+  const client = { query: async (sql, values) => { calls.push({ sql, values }); return { rows: [], rowCount: 3 }; }, release() {} };
+  const store = new PostgresStore({ connect: async () => client });
+  assert.equal(await store.resetResponses({ id: 'target', status: 'draft' }), 3);
+  assert.ok(calls.find(c => c.sql.includes('FOR UPDATE')));
+  assert.deepEqual(calls.find(c => c.sql.startsWith('DELETE')).values, ['target']);
+  assert.ok(calls.find(c => c.sql === 'COMMIT'));
+});
+
 test('PostgreSQL configuration verifies TLS, bounds pooling, and never prints connection secrets', () => {
   const config = postgresConfig({ DATABASE_URL: 'postgresql://test:private@example.invalid/db?sslmode=require&channel_binding=require' });
   assert.equal(config.ssl.rejectUnauthorized, true);
