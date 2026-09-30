@@ -200,8 +200,9 @@ test('AI background is admin-only, validated, scoped, preserved in backup and om
   assert.equal(publicResult.data.survey.questions[0].aiContext, undefined);
   const scoped = { ...survey, questions: [survey.questions[0]] };
   const response = { questionId: 'first', answers: { first: 'よかった' }, turns: [] };
-  const prompt = JSON.parse(messagesFor(scoped, response)[1].content);
-  assert.deepEqual(prompt.background[0].files, context.files);
+  const prompt = messagesFor(scoped, response)[0].content;
+  const fixed = JSON.parse(prompt.split('\n').at(-1)).surveyContext;
+  assert.deepEqual(fixed.background[0].files, context.files);
   assert.equal(JSON.stringify(prompt).includes('別設問の資料'), false);
   assert.deepEqual(JSON.parse(messagesFor(scoped, response, true)[1].content).background, []);
   const cookie = await login(app);

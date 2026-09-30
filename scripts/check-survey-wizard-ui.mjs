@@ -26,9 +26,11 @@ const calls = [];
 const server = createWebServer(createApp({
   store: { records: async name => structuredClone(tables[name]), append: async (name, record) => tables[name].push(structuredClone(record)) },
   ai: async (s, r, summarize) => {
-    const prompt = messagesFor(s, r, summarize)[0].content;
-    calls.push({ summarize, prompt });
-    return summarize ? '演習が役立ち、今後も実践の機会を希望している。' : prompt.includes('今回が最後の質問') ? '最後に、今後いちばん大切にしたいことは何ですか？' : '特に役立ったことを教えてください。';
+    const messages = messagesFor(s, r, summarize);
+    const prompt = messages[0].content;
+    const closing = !summarize && JSON.parse(messages[1].content).interviewState.closing;
+    calls.push({ summarize, prompt, closing });
+    return summarize ? '演習が役立ち、今後も実践の機会を希望している。' : closing ? '最後に、今後いちばん大切にしたいことは何ですか？' : '特に役立ったことを教えてください。';
   }
 }));
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -56,8 +58,9 @@ try {
   await page.getByRole('button', { name: '回答する', exact: true }).click();
   await page.getByText('最後に、今後いちばん大切にしたいことは何ですか？', { exact: true }).waitFor();
   assert.equal(calls[0].summarize, false);
-  assert.doesNotMatch(calls[0].prompt, /今回が最後の質問/);
-  assert.match(calls[1].prompt, /今回が最後の質問/);
+  assert.equal(calls[0].closing, false);
+  assert.equal(calls[1].closing, true);
+  assert.equal(calls[0].prompt, calls[1].prompt);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: '/tmp/koenoha-wizard-mobile.png', fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
