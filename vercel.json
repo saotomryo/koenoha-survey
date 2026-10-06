@@ -7,7 +7,8 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },
     { "source": "/admin/:path*", "destination": "/index.html" },
-    { "source": "/survey/:path*", "destination": "/index.html" }
+    { "source": "/survey/:path*", "destination": "/index.html" },
+    { "source": "/report/:path*", "destination": "/index.html" }
   ],
   "headers": [{ "source": "/(.*)", "headers": [
     { "key": "X-Content-Type-Options", "value": "nosniff" },

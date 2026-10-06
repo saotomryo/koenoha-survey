@@ -157,3 +157,19 @@ summary { cursor: pointer; line-height: 1.8; overflow-wrap: anywhere; }
   .result-totals { gap: 34px; }
   .actions { gap: 8px; }
 }
+/* Generated reports are separate from live aggregation. */
+.analysis-report > section { margin: 36px 0; }
+.analysis-report h2 { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.report-map-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; }
+#report-map { display: block; width: 100%; height: auto; aspect-ratio: 800 / 580; background: white; border: 1px solid var(--line); border-radius: 4px; }
+#report-map circle { cursor: pointer; }
+#report-map circle:focus { stroke: #202a2d; stroke-width: 3px; outline: none; }
+#report-opinion { min-width: 0; overflow-wrap: anywhere; background: white; padding: 16px; border-top: 3px solid var(--green); max-height: 520px; overflow-y: auto; }
+.analysis-report blockquote, #report-opinion blockquote { margin: 12px 0; padding: 10px 14px; border-left: 3px solid #b5c8c0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-legend { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 16px 0; }
+.report-legend i { display: inline-block; width: 12px; height: 12px; margin-right: 8px; }
+.report-insight { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.report-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-publication { border-bottom: 1px solid var(--line); padding-bottom: 24px; }
+.analysis-report footer { margin-top: 30px; }
+@media(max-width:720px) { .report-map-layout { grid-template-columns: 1fr; } }

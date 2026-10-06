@@ -95,6 +95,7 @@ function editor() {
     <section class="editor-section"><h2>AI共通設定</h2><div class="editor-row"><label>プロバイダー<select name="provider"><option value="openai" ${s.interview.provider === 'openai' ? 'selected' : ''}>OpenAI</option><option value="anthropic" ${s.interview.provider === 'anthropic' ? 'selected' : ''}>Claude</option></select></label><label class="grow">モデル<input name="model" value="${escape(s.interview.model)}" placeholder="${escape(models.find(p => p.id === s.interview.provider)?.model || 'サーバーの既定値')}" maxlength="100"></label></div><div class="editor-row"><label class="check"><input name="aiEnabled" type="checkbox" ${s.interview.enabled ? 'checked' : ''}>最後にアンケート全体のAIインタビューも追加する</label><label>末尾インタビューの質問回数<input name="maxTurns" type="number" min="1" max="10" value="${s.interview.maxTurns}"></label></div></section><div class="save-bar"><button type="submit" class="primary">${icon('save')}保存する</button></div></form>`);
   document.querySelector('.editor-basics').insertAdjacentHTML('beforeend', `<label>回答保存先のスプレッドシートID（任意）<input name="spreadsheetId" value="${escape(s.spreadsheetId || '')}" maxlength="200" placeholder="未指定の場合は共通スプレッドシート"></label><p class="muted">${state.settings?.storage === 'sheets' ? '回答はアンケート専用タブに保存します。' : 'ローカル保存中です。この設定はGoogleスプレッドシート利用時に適用されます。'}</p>`);
   document.querySelector('.editor-basics').insertAdjacentHTML('beforeend', `<h2>回答数の上限</h2><div class="editor-row"><label>想定回答数<input name="expectedResponses" type="number" min="1" max="100000" step="1" required value="${s.expectedResponses ?? 100}"></label><label>上限倍率<input name="responseLimitMultiplier" type="number" min="1" max="1.9" step="0.1" required value="${s.responseLimitMultiplier ?? 1.2}"></label><label>受付上限<output id="response-limit"></output></label></div>`);
+  document.querySelector('.editor-basics').insertAdjacentHTML('beforeend', `<h2>分析レポート設定</h2><div class="editor-row"><label>クラスタ数<input name="reportClusters" type="number" min="2" max="12" value="${s.report?.clusters??4}" required></label><label>閲覧方式<select name="reportAccess"><option value="password" ${s.report?.access!=='url'?'selected':''}>パスワード付き公開</option><option value="url" ${s.report?.access==='url'?'selected':''}>URLを知っていれば閲覧可能</option></select></label></div><p class="muted">生成後は管理者の確認待ちになります。公開はレビュー後に別途操作します。</p>`);
   const updateLimit = () => { document.querySelector('#response-limit').textContent = `${Math.ceil(Number(document.querySelector('[name="expectedResponses"]').value) * Number(document.querySelector('[name="responseLimitMultiplier"]').value))}件`; };
   for (const name of ['expectedResponses', 'responseLimitMultiplier']) document.querySelector(`[name="${name}"]`).addEventListener('input', updateLimit);
   updateLimit();
@@ -122,6 +123,7 @@ function captureEditor() {
   s.spreadsheetId = form.elements.spreadsheetId.value.trim();
   s.expectedResponses = Number(form.elements.expectedResponses.value);
   s.responseLimitMultiplier = Number(form.elements.responseLimitMultiplier.value);
+  s.report={clusters:Number(form.elements.reportClusters.value),access:form.elements.reportAccess.value};
   for (const name of ['id', 'title', 'description', 'status']) s[name] = form.elements[name].value;
   for (const name of ['startsAt', 'endsAt']) s[name] = fromLocal(form.elements[name].value);
   s.interview = { enabled: form.elements.aiEnabled.checked, provider: form.elements.provider.value, model: form.elements.model.value, maxTurns: Number(form.elements.maxTurns.value) };
@@ -273,12 +275,78 @@ async function results(id) {
   document.querySelector('.page-heading .actions').insertAdjacentHTML('afterbegin', `<a class="button" href="/api/admin/surveys/${id}/backup" download>${icon('download')}アンケートJSON出力</a>`);
   document.querySelector('.interview-results').insertAdjacentHTML('afterend', `<section class="result-field"><h2>試用後の回答削除</h2><p>このアンケートの全回答・AI会話・要約を削除し、下書きに戻します。URLは変更されず、設問を編集して再公開できます。必要なデータは先にJSON出力で保存してください。</p><button type="button" data-action="reset-responses" data-id="${id}">${icon('trash-2')}全回答を削除して下書きに戻す</button></section>`);
   lucide.createIcons();
+  try{await reportList(id);}catch(error){notice(error.message);}
+}
+let reportBusy=false;
+const reportApi=(url,{method='GET',body}={})=>api(url,method,body);
+async function reportList(surveyId){
+ const data=await api(`/api/admin/surveys/${surveyId}/reports`);
+ const section=document.createElement('section');section.id='analysis-reports';
+ section.innerHTML=`<h2>分析レポート</h2><label for="report-create-clusters">クラスタ数</label><input id="report-create-clusters" type="number" min="2" max="12" step="1" required value="${data.clusters??4}"><button type="button" id="create-report">${icon('chart-scatter')}分析レポートを作成</button><p class="muted">生成時点の回答を固定します。クラスタ数は今回のレポートにのみ適用します。意見数が少ない場合は指定数より少なくなります。生成後にレビュー・公開できます。</p>${data.reports.map(r=>`<p><a href="/admin/reports/${r.id}">${escape(dateLabel(r.createdAt))}</a> · ${r.status==='failed'?'失敗・再開可能':r.published?'公開中':r.status==='review'?'確認待ち':'生成途中'}</p>`).join('')}`;
+ document.querySelector('main').append(section);lucide.createIcons();
+ section.querySelector('#create-report').onclick=async event=>{
+  if(reportBusy)return;const input=section.querySelector('#report-create-clusters');if(!input.reportValidity())return;
+  const clusters=input.valueAsNumber;reportBusy=true;event.currentTarget.disabled=true;
+  try{const result=await reportApi(`/api/admin/surveys/${surveyId}/reports`,{method:'POST',body:{clusters}});history.pushState({},'',`/admin/reports/${result.id}`);reportBusy=false;await adminReport(result.id);await runReport(result.id);}catch(e){notice(e.message);}finally{reportBusy=false;if(document.querySelector('#create-report'))document.querySelector('#create-report').disabled=false;}
+ };
+}
+async function runReport(id){
+ if(reportBusy)return;reportBusy=true;
+ try{
+  while(location.pathname===`/admin/reports/${id}`){
+   const d=await api(`/api/admin/reports/${id}`);if(['review','published'].includes(d.status))break;
+   mount(heading('分析レポートを生成中','','')+`<p role="status">${escape(d.stageName)} · ${d.cursor}件処理済み</p><p class="muted">この画面を閉じた場合は、レポート画面から再開できます。</p>`);
+   await reportApi(`/api/admin/reports/${id}/step`,{method:'POST',body:{revision:d.revision}});
+  }
+ }catch(e){notice(e.message);}finally{reportBusy=false;if(location.pathname===`/admin/reports/${id}`)await adminReport(id);}
+}
+async function adminReport(id){
+ const d=await api(`/api/admin/reports/${id}`);const r=d.report;
+ const ready=['review','published'].includes(d.status);
+ mount(heading('分析レポート',d.published?'公開中':ready?'確認待ち':'生成途中',`<a href="/admin/results/${d.surveyId}">リアルタイム集計へ戻る</a>`)+
+ (!ready?`<p>${escape(d.stageName)} · ${d.cursor}バッチ処理済み</p>${d.error?`<p class="muted">${escape(d.error)}</p>`:''}${d.stage==='finalPrivacy'?'<p class="muted">再開時に疑いのある意見を個別チェックし、該当意見を除外して分析を作り直します。回答原本は変更しません。箇所を特定できない場合は停止します。</p>':''}<button id="resume-report">${icon('play')}処理を再開</button>`:
+ `<section class="report-publication"><h2>レビューと公開</h2><p>個人情報チェックによる除外：${d.excluded}件。原文と文面を確認してください。</p><form id="publish-report"><label class="check"><input name="reviewed" type="checkbox" required>内容・原文・個人情報の除外をレビューしました</label><label>閲覧方式<select name="access"><option value="password" ${d.access==='password'?'selected':''}>パスワード付き</option><option value="url" ${d.access==='url'?'selected':''}>URLを知っていれば閲覧可能</option></select></label><label id="report-password-label">レポート用パスワード<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="既存のパスワードを維持する場合は空欄"></label><button type="submit" class="primary">${icon('globe')}公開する</button>${d.published?'<button type="button" id="unpublish-report">公開停止</button>':''}</form>${d.published?`<p><a href="/report/${id}" target="_blank" rel="noopener">公開レポートを開く</a></p><input readonly aria-label="公開URL" value="${escape(location.origin+'/report/'+id)}">`:''}${!d.privacyReviewed?'<button id="privacy-report">個人情報を再チェック</button>':''}</section><details><summary>レポートの文面を編集</summary>${reportEditor(r)}</details>${reportMarkup(r)}`));
+ if(!ready){document.querySelector('#resume-report').onclick=()=>runReport(id);return;}
+ if(d.privacyWarnings?.length){
+  const warning=document.createElement('section');warning.setAttribute('role','note');
+  warning.innerHTML=`<h3>個人情報の可能性：要確認</h3><p>AIが判断を保留した箇所です。公開前に管理者が確認してください。</p><ul>${d.privacyWarnings.flatMap(w=>w.findings.map(f=>`<li>チェックバッチ ${w.batch} · ${escape(f.location)}：${escape(f.reason)}</li>`)).join('')}</ul>`;
+  document.querySelector('.report-publication').prepend(warning);
+  document.querySelector('#publish-report input[name="reviewed"]').parentElement.append(document.createTextNode('（上記の個人情報警告も確認済み）'));
+ }
+ drawReport(r);
+ const metadata=document.createElement('details');metadata.innerHTML=`<summary>比較用の生成情報</summary><p class="muted">データ識別値：${escape(d.snapshotHash)}<br>埋め込み：${escape(r.embeddingModel)}<br>処理：${escape(d.method)}</p>`;document.querySelector('.report-publication').append(metadata);
+ const publish=document.querySelector('#publish-report');
+ publish.elements.reviewed.checked=d.reviewed===true;
+ const saveReview=document.createElement('button');saveReview.type='button';saveReview.id='save-report-review';saveReview.textContent='レビュー状態を保存';
+ publish.elements.reviewed.parentElement.after(saveReview);
+ const syncPassword=()=>document.querySelector('#report-password-label').hidden=publish.elements.access.value!=='password';publish.elements.access.onchange=syncPassword;syncPassword();
+ const post=async(action,body)=>{if(reportBusy)return;reportBusy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);try{const saved=await reportApi(`/api/admin/reports/${id}/${action}`,{method:'POST',body:{...body,revision:d.revision}});d.revision=saved.revision;}catch(e){notice(e.message);return false;}finally{reportBusy=false;}return true;};
+ saveReview.onclick=async()=>{
+  const checkbox=publish.elements.reviewed,value=checkbox.checked;checkbox.disabled=true;
+  try{if(await post('review',{reviewed:value})){d.reviewed=value;saveReview.textContent='レビュー状態を保存しました';if(!value&&d.published){await adminReport(id);return;}}else checkbox.checked=d.reviewed===true;}
+  finally{checkbox.disabled=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);}
+ };
+ publish.elements.reviewed.onchange=()=>{saveReview.textContent='レビュー状態を保存';};
+ publish.onsubmit=async e=>{e.preventDefault();if(await post('publish',{publish:true,reviewed:publish.elements.reviewed.checked,access:publish.elements.access.value,password:publish.elements.password.value}))await adminReport(id);else document.querySelectorAll('button').forEach(b=>b.disabled=false);};
+ document.querySelector('#unpublish-report')?.addEventListener('click',async()=>{await post('publish',{publish:false});await adminReport(id);});
+ document.querySelector('#privacy-report')?.addEventListener('click',async()=>{if(await post('privacy',{})){await adminReport(id);await runReport(id);}else document.querySelectorAll('button').forEach(b=>b.disabled=false);});
+ document.querySelector('#report-edit').onsubmit=async e=>{
+  e.preventDefault();const form=e.currentTarget;const changes={title:form.elements.title.value,summary:form.elements.summary.value,discussion:form.elements.discussion.value,recommendations:form.elements.recommendations.value.split('\n').map(s=>s.trim()).filter(Boolean),groups:r.clustering.groups.map((g,i)=>form.elements[`group-${i}`].value),highlights:r.highlights.map((h,i)=>({title:form.elements[`highlight-title-${i}`].value,reason:form.elements[`highlight-reason-${i}`].value}))};
+  if(await post('edit',{changes})){const latest=await api(`/api/admin/reports/${id}`);try{await reportApi(`/api/admin/reports/${id}/privacy`,{method:'POST',body:{revision:latest.revision}});await adminReport(id);await runReport(id);}catch(error){await adminReport(id);notice(error.message);}}else document.querySelectorAll('button').forEach(b=>b.disabled=false);
+ };
+}
+async function publishedReport(id){
+ const data=await api(`/api/reports/${id}`);
+ if(data.locked){mount(`<h1>レポートの閲覧</h1><form id="report-unlock"><label>パスワード<input name="password" type="password" maxlength="128" required autocomplete="current-password"></label><button type="submit">開く</button></form>`);document.querySelector('#report-unlock').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{await reportApi(`/api/reports/${id}/unlock`,{method:'POST',body:{password:e.currentTarget.elements.password.value}});await publishedReport(id);}catch(error){notice(error.message);button.disabled=false;}};return;}
+ mount(reportMarkup(data.report));drawReport(data.report);
 }
 async function route() {
   const path = location.pathname;
   if (path.startsWith('/admin')) {
     state.admin = (await api('/api/session')).authenticated;
     if (!state.admin) return login();
+    const report=path.match(/^\/admin\/reports\/([a-z0-9-]{36})$/);
+    if(report)return adminReport(report[1]);
     if (path === '/admin/new') { state.settings = await api('/api/admin/settings'); state.editing = false; state.survey = template(); return editor(); }
     const edit = path.match(/^\/admin\/edit\/([^/]+)$/);
     if (edit) { state.settings = await api('/api/admin/settings'); state.editing = true; state.survey = (await api(`/api/admin/surveys/${edit[1]}`)).survey; return editor(); }
@@ -286,6 +354,8 @@ async function route() {
     if (result) return results(result[1]);
     return admin();
   }
+  const report=path.match(/^\/report\/([a-z0-9-]{36})$/);
+  if(report)return publishedReport(report[1]);
   const answer = path.match(/^\/survey\/([^/]+)\/?$/);
   if (answer) {
     state.survey = (await api(`/api/surveys/${answer[1]}`)).survey;
@@ -338,6 +408,7 @@ root.addEventListener('submit', event => {
   event.preventDefault();
   const form = event.target;
   const formId = form.getAttribute('id');
+  if(['report-edit','publish-report','report-unlock'].includes(formId))return;
   const mode = event.submitter?.value;
   // Capture before run() disables controls; disabled form fields are omitted by FormData.
   let data;
@@ -437,3 +508,4 @@ root.addEventListener('click', event => {
 });
 mount('<div class="empty">読み込み中…</div>');
 route().catch(error => { mount(heading('ページを表示できませんでした')); notice(error.message); });
+import {reportMarkup,drawReport,reportEditor} from './reports.js';

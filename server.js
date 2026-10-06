@@ -11,7 +11,7 @@ return createServer(async (req, res) => {
   if (req.url.startsWith('/api/')) return handler(req, res);
   try {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    const file = ['/', '/admin'].includes(pathname) || pathname.startsWith('/admin/') || pathname.startsWith('/survey/') ? 'index.html' : decodeURIComponent(pathname).slice(1);
+    const file = ['/', '/admin'].includes(pathname) || pathname.startsWith('/admin/') || pathname.startsWith('/survey/') || pathname.startsWith('/report/') ? 'index.html' : decodeURIComponent(pathname).slice(1);
     const target = path.resolve(publicDir, file);
     if (!target.startsWith(publicDir) || !types[path.extname(target)]) { res.writeHead(404); return res.end('Not found'); }
     const content = await readFile(target);
