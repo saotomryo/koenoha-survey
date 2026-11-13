@@ -151,6 +151,12 @@ test('summary prompt excludes interview instructions and background information'
   assert.match(summary[0].content, /要約担当/);
   assert.doesNotMatch(summary[0].content, /深掘りしてください|質問は一度に1つ|次の質問本文/);
   assert.equal(JSON.stringify(summary).includes('資料のみの情報'), false);
+  const input=JSON.parse(summary[1].content);
+  assert.ok(Array.isArray(input.answers));
+  assert.deepEqual(input.respondentStatements,['使い方を学べた']);
+  assert.ok(!JSON.stringify(input.answers).includes('理由'));
+  assert.match(summary[0].content,/会話中の回答者の発言/);
+  assert.match(summary[0].content,/未回答の質問/);
   assert.match(messagesFor(survey, response, false)[0].content, /次の質問本文/);
 });
 

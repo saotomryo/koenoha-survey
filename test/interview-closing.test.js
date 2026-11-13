@@ -30,6 +30,19 @@ test('initial written answers, reasons and speech permit context while choice la
  assert.equal(state(base,{...r,reasons:{q:'  '}}).hasWrittenResponse,false);
 });
 
+test('summary retains all respondent insights without an empty reason field or unanswered AI claims',()=>{
+ const s={title:'勉強会',attributes:[],questions:[{id:'q',label:'満足度',type:'slider',followUp:{},aiContext:{text:'資料だけの具体策'}}],interview:{maxTurns:5}};
+ const speech=['面白かった','最近のセキュリティ事件の概要がわかった','気にするべきポイントがわかった'];
+ const turns=speech.flatMap(content=>[{role:'assistant',content:'感想は？'},{role:'user',content}]);
+ turns.push({role:'assistant',content:'今後は多要素認証を使いますか？'});
+ const messages=messagesFor(s,{questionId:'q',answers:{q:4},reasons:{},turns},true),input=JSON.parse(messages[1].content);
+ assert.deepEqual(input.respondentStatements,speech);
+ assert.deepEqual(input.answers,[{question:'満足度',answer:4}]);
+ assert.ok(!input.respondentStatements.some(t=>t.includes('多要素認証')));
+ assert.ok(!JSON.stringify(messages).includes('資料だけの具体策'));
+ assert.match(messages[0].content,/どのポイントかは本人が述べていない限り補完しない/);
+});
+
 test('only the final available question closes the interview, including one-question interviews', () => {
   const survey = { title: '感想', attributes: [], questions: [{ id: 'q', label: '満足度', followUp: {} }], interview: { maxTurns: 3 } };
   const response = { questionId: 'q', answers: { q: '満足' }, turns: [{ role: 'user', content: '最初の理由' }] };
